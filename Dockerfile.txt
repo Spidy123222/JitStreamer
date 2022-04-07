@@ -1,0 +1,33 @@
+# Retreive Base Image
+FROM ubuntu:latest
+
+# install rust
+curl https://sh.rustup.rs -sSf | sh
+
+# Grab dependancies
+apt-get install git \ 
+    gnutls \ 
+    openssl \
+    build-essential \
+    pkg-config \
+    checkinstall \
+    git \
+    autoconf \
+    automake \
+
+    # create structure
+    mkdir libi
+cd libi
+git clone https://github.com/jkcoxson/rusty_libimobiledevice.git
+cd rusty_libimobiledevice
+mkdir submodules
+cd submodules
+
+# clone modules
+git clone https://github.com/libimobiledevice/libplist.git
+git clone https://github.com/libimobiledevice/usbmuxd.git
+git clone https://github.com/libimobiledevice/libimobiledevice.git
+git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
+
+cd ..
+cargo build --release
