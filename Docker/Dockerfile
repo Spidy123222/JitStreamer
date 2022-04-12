@@ -20,7 +20,6 @@ EXPOSE 8069
 # Grab dependancies
 RUN apt-get update && apt-get install -y git \ 
     libgnutls28-dev \ 
-    openssl \
     build-essential \
     git \
     autoconf \
@@ -29,7 +28,12 @@ RUN apt-get update && apt-get install -y git \
     cython \
     curl \
     libssl-dev \
-    pkg-config
+    pkg-config \
+    libusb-1.0 \
+    libtool-bin \
+    libplist-dev \
+    udev \
+    libssl-dev
 
 # Update new packages
 RUN apt-get update
@@ -39,19 +43,28 @@ RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # create structure
-RUN mkdir libi
-RUN cd libi
-RUN git clone https://github.com/jkcoxson/rusty_libimobiledevice.git
-RUN cd rusty_libimobiledevice
-RUN mkdir submodules
-RUN cd submodules
+
+RUN cd /usr/local/lib && git clone https://github.com/jkcoxson/rusty_libimobiledevice.git
+RUN cd /usr/local/lib/rusty_libimobiledevice && mkdir submodules
 
 # clone modules
-RUN git clone https://github.com/libimobiledevice/libplist.git
-RUN git clone https://github.com/libimobiledevice/usbmuxd.git
-RUN git clone https://github.com/libimobiledevice/libimobiledevice.git
-RUN git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
+# RUN cd /usr/local/lib
+RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libplist.git
+RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libusbmuxd.git
+RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libimobiledevice.git
+RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
+RUN cd /usr/local/lib && git clone https://github.com/openssl/openssl.git
+# RUN git clone https://github.com/jkcoxson/plist_plus.git
 
-RUN cd rusty_libimobiledevice && cargo build --release
+# Build Static's
+RUN cd /usr/local/lib/openssl && ./Configure --static -static && make && make install
+RUN cd /usr/local/lib/libplist && ./autogen.sh --enable-static && make && make install
+RUN cd /usr/local/lib/libimobiledevice-glue && ./autogen.sh --enable-static && make && make install
+RUN cd /usr/local/lib/libusbmuxd && ./autogen.sh --enable-static && make && make install
+RUN cd /usr/local/lib/libimobiledevice && ./autogen.sh --enable-static && make && make install
 
-RUN cd .. && git clone https://github.com/jkcoxson/JitStreamer.git && cd JitStreamer && cargo build --release
+
+
+RUN cd /usr/local/lib/rusty_libimobiledevice && cargo build --release
+
+RUN cd /usr/local/lib && git clone https://github.com/jkcoxson/JitStreamer.git && cd JitStreamer && cargo build --release
