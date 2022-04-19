@@ -51,9 +51,10 @@ RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # create structure
-RUN echo jojo
+RUN echo yo
 RUN cd /usr/local/lib && git clone https://github.com/jkcoxson/rusty_libimobiledevice.git
 RUN cd /usr/local/lib/rusty_libimobiledevice && mkdir submodules
+
 
 # clone modules
 # RUN cd /usr/local/lib
@@ -62,11 +63,11 @@ RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libusbmux
 RUN cd /usr/local/lib && git clone https://github.com/jkcoxson/plist_plus.git
 RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libimobiledevice.git
 RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
-RUN cd /usr/local/lib && git clone https://github.com/openssl/openssl.git
+#RUN cd /usr/local/lib && git clone https://github.com/openssl/openssl.git
 
 
 # Build Static's
-RUN cd /usr/local/lib/openssl && ./Configure --static -static && make && make install
+#RUN cd /usr/local/lib/openssl && ./Configure --static -static && make && make install
 RUN cd /usr/local/lib/libplist && ./autogen.sh --enable-static && make && make install
 RUN cd /usr/local/lib/libimobiledevice-glue && ./autogen.sh --enable-static && make && make install
 RUN cd /usr/local/lib/libusbmuxd && ./autogen.sh --enable-static && make && make install
