@@ -61,30 +61,33 @@ RUN mkdir submodules
 # clone modules
 # RUN cd /usr/local/lib
 WORKDIR /Product
-RUN git clone https://github.com/libimobiledevice/libplist.git
-RUN git clone https://github.com/libimobiledevice/libusbmuxd.git
+#RUN git clone https://github.com/libimobiledevice/libplist.git
+#RUN git clone https://github.com/libimobiledevice/libusbmuxd.git
 RUN git clone https://github.com/jkcoxson/plist_plus.git
-RUN git clone https://github.com/libimobiledevice/libimobiledevice.git
-RUN git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
+#RUN git clone https://github.com/libimobiledevice/libimobiledevice.git
+#RUN git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
 #RUN cd /usr/local/lib && git clone https://github.com/openssl/openssl.git
 
 
 # Build Static's
 
 #RUN cd /usr/local/lib/openssl && ./Configure --static -static && make && make install
-WORKDIR /Product/libplist
-RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
-WORKDIR /Product/libimobiledevice-glue
-RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
-WORKDIR /Product/libusbmuxd
-RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
-WORKDIR /Product/libimobiledevice
-RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+#WORKDIR /Product/libplist
+#RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+#WORKDIR /Product/libimobiledevice-glue
+#RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+#WORKDIR /Product/libusbmuxd
+#RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+#WORKDIR /Product/libimobiledevice
+#RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
 
 #WORKDIR /Product/rusty_libimobiledevice
 #RUN cargo build --release
 #WORKDIR /Product/plist_plus
 #RUN cargo build --release
+
+RUN apt-get install -y cmake \
+    python-jinja2
 WORKDIR /Product
 RUN git clone https://github.com/jkcoxson/JitStreamer.git
 WORKDIR /Product/JitStreamer
