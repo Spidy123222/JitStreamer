@@ -51,30 +51,44 @@ RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # create structure
-RUN echo yo
-RUN cd /usr/local/lib && git clone https://github.com/jkcoxson/rusty_libimobiledevice.git
-RUN cd /usr/local/lib/rusty_libimobiledevice && mkdir submodules
+
+WORKDIR /Product
+RUN git clone https://github.com/jkcoxson/rusty_libimobiledevice.git
+WORKDIR /Product/rusty_libimobiledevice
+RUN mkdir submodules
 
 
 # clone modules
 # RUN cd /usr/local/lib
-RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libplist.git
-RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libusbmuxd.git
-RUN cd /usr/local/lib && git clone https://github.com/jkcoxson/plist_plus.git
-RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libimobiledevice.git
-RUN cd /usr/local/lib && git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
+WORKDIR /Product
+RUN git clone https://github.com/libimobiledevice/libplist.git
+RUN git clone https://github.com/libimobiledevice/libusbmuxd.git
+RUN git clone https://github.com/jkcoxson/plist_plus.git
+RUN git clone https://github.com/libimobiledevice/libimobiledevice.git
+RUN git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
 #RUN cd /usr/local/lib && git clone https://github.com/openssl/openssl.git
 
 
 # Build Static's
+
 #RUN cd /usr/local/lib/openssl && ./Configure --static -static && make && make install
-RUN cd /usr/local/lib/libplist && ./autogen.sh --enable-static && make && make install
-RUN cd /usr/local/lib/libimobiledevice-glue && ./autogen.sh --enable-static && make && make install
-RUN cd /usr/local/lib/libusbmuxd && ./autogen.sh --enable-static && make && make install
-RUN cd /usr/local/lib/libimobiledevice && ./autogen.sh --enable-static && make && make install
+WORKDIR /Product/libplist
+RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+WORKDIR /Product/libimobiledevice-glue
+RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+WORKDIR /Product/libusbmuxd
+RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+WORKDIR /Product/libimobiledevice
+RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
 
+#WORKDIR /Product/rusty_libimobiledevice
+#RUN cargo build --release
+#WORKDIR /Product/plist_plus
+#RUN cargo build --release
+WORKDIR /Product
+RUN git clone https://github.com/jkcoxson/JitStreamer.git
+WORKDIR /Product/JitStreamer
+RUN cargo build --release
 
-RUN cd /usr/local/lib/rusty_libimobiledevice && cargo build --release
-RUN cd /usr/local/lib/plist_plus && cargo build --release
-
-RUN cd /usr/local/lib && git clone https://github.com/jkcoxson/JitStreamer.git && cd JitStreamer && cargo build --release
+WORKDIR /Product/JitStreamer/target/release/
+ENTRYPOINT ls && ./jit_streamer
