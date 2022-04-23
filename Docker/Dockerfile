@@ -19,13 +19,14 @@ EXPOSE 8069
 
 # Grab dependancies
 RUN apt-get update && apt-get install -y git \ 
-    libgnutls28-dev \ 
     build-essential \
+    #cython \
+    libgnutls28-dev \ 
     git \
     autoconf \
     automake \
+    python3-pip \
     doxygen \
-    cython \
     curl \
     libssl-dev \
     pkg-config \
@@ -43,6 +44,8 @@ RUN apt-get update && apt-get install -y git \
     python3-pycurl \
     libwww-curl-perl
 
+RUN pip install Cython --install-option="--no-cython-compile"
+
 # Update new packages
 RUN apt-get update
 
@@ -51,7 +54,7 @@ RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # create structure
-
+RUN echo 'Fire Through the flames'
 WORKDIR /Product
 RUN git clone https://github.com/jkcoxson/rusty_libimobiledevice.git
 WORKDIR /Product/rusty_libimobiledevice
@@ -62,10 +65,10 @@ RUN mkdir submodules
 # RUN cd /usr/local/lib
 WORKDIR /Product
 #RUN git clone https://github.com/libimobiledevice/libplist.git
-#RUN git clone https://github.com/libimobiledevice/libusbmuxd.git
+RUN git clone https://github.com/libimobiledevice/libusbmuxd.git
 RUN git clone https://github.com/jkcoxson/plist_plus.git
 #RUN git clone https://github.com/libimobiledevice/libimobiledevice.git
-#RUN git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
+RUN git clone https://github.com/libimobiledevice/libimobiledevice-glue.git
 #RUN cd /usr/local/lib && git clone https://github.com/openssl/openssl.git
 
 
@@ -74,10 +77,10 @@ RUN git clone https://github.com/jkcoxson/plist_plus.git
 #RUN cd /usr/local/lib/openssl && ./Configure --static -static && make && make install
 #WORKDIR /Product/libplist
 #RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
-#WORKDIR /Product/libimobiledevice-glue
-#RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
-#WORKDIR /Product/libusbmuxd
-#RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+WORKDIR /Product/libimobiledevice-glue
+RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
+WORKDIR /Product/libusbmuxd
+RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
 #WORKDIR /Product/libimobiledevice
 #RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && make install
 
@@ -86,8 +89,9 @@ RUN git clone https://github.com/jkcoxson/plist_plus.git
 #WORKDIR /Product/plist_plus
 #RUN cargo build --release
 
-RUN apt-get install -y cmake \
-    python-jinja2
+#RUN apt-get install -y cmake \
+#    python-jinja2
+RUN echo "retry"
 WORKDIR /Product
 RUN git clone https://github.com/jkcoxson/JitStreamer.git
 WORKDIR /Product/JitStreamer
