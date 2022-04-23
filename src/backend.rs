@@ -1,6 +1,7 @@
 // jkcoxson
 
-use rusty_libimobiledevice::debug;
+use log::warn;
+use rand::Rng;
 use rusty_libimobiledevice::idevice::Device;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -17,6 +18,15 @@ pub struct Backend {
     database_path: String,
     plist_storage: String,
     pub dmg_path: String,
+
+    #[serde(skip)]
+    pub pair_potential: Vec<PairPotential>,
+}
+
+#[derive(Debug)]
+pub struct PairPotential {
+    pub ip: String,
+    pub code: u16,
 }
 
 impl Backend {
@@ -32,6 +42,7 @@ impl Backend {
                     database_path: config.database_path.clone(),
                     plist_storage: config.plist_storage.clone(),
                     dmg_path: config.dmg_path.clone(),
+                    pair_potential: vec![],
                 };
             }
         };
@@ -44,6 +55,7 @@ impl Backend {
             database_path: config.database_path.clone(),
             plist_storage: config.plist_storage.clone(),
             dmg_path: config.dmg_path.clone(),
+            pair_potential: vec![],
         }
     }
 
@@ -69,9 +81,6 @@ impl Backend {
     pub fn register_client(&mut self, ip: String, udid: String) -> Result<(), ()> {
         // Check if the client is already registered.
         if self.get_by_ip(&ip).is_some() {
-            return Err(());
-        }
-        if self.get_by_udid(&udid).is_some() {
             return Err(());
         }
         let start = SystemTime::now();
@@ -125,7 +134,7 @@ impl Backend {
         }
     }
 
-    pub fn get_by_udid(&self, udid: &str) -> Option<Client> {
+    pub fn _get_by_udid(&self, udid: &str) -> Option<Client> {
         let res = self.deserialized_clients.iter().find(|c| c.udid == udid);
         match res {
             Some(c) => Some(c.to_client(
@@ -158,7 +167,7 @@ impl Backend {
         let ip = match IpAddr::from_str(ip) {
             Ok(ip) => ip,
             Err(e) => {
-                debug!("Error parsing ip: {}", e);
+                warn!("Error parsing ip {}: {}", ip, e);
                 return Err(());
             }
         };
@@ -167,10 +176,52 @@ impl Backend {
         let _ = match to_test.new_lockdownd_client("test".to_string()) {
             Ok(_) => return Ok(()),
             Err(e) => {
-                debug!("Error creating lockdownd client: {:?}", e);
+                warn!("Error creating lockdownd client: {:?}", e);
                 return Err(());
             }
         };
+    }
+
+    pub fn prefered_app(name: &str) -> bool {
+        let app_list = include_str!("known_apps.txt").to_string();
+        let apps: Vec<&str> = app_list.split("\n").collect();
+        for app in apps {
+            if name.contains(app) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn potential_pair(&mut self, ip: String) -> u16 {
+        let mut rng = rand::thread_rng();
+        let code: u16 = rng.gen_range(10000..65535);
+
+        let p = PairPotential { ip, code };
+        self.pair_potential.push(p);
+        code
+    }
+
+    pub fn check_code(&mut self, code: u16) -> Option<String> {
+        let mut i = 0;
+        while i < self.pair_potential.len() {
+            if self.pair_potential[i].code == code {
+                let ip = self.pair_potential[i].ip.clone();
+                return Some(ip);
+            }
+            i = i + 1;
+        }
+        None
+    }
+
+    pub fn remove_code(&mut self, code: u16) {
+        let mut i = 0;
+        while i < self.pair_potential.len() {
+            if self.pair_potential[i].code == code {
+                self.pair_potential.remove(i);
+            }
+            i = i + 1;
+        }
     }
 }
 

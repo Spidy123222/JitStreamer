@@ -5,6 +5,8 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+default-run = "jit_streamer"
+
 [dependencies]
 tokio = { version = "*", features = [ "full" ] }
 warp = { version = "*" }
@@ -12,8 +14,15 @@ futures = { version = "*" }
 bytes = { version = "*" }
 serde = { version = "*", features = [ "derive" ] }
 serde_json = { version = "*" }
-rusty_libimobiledevice = { version = "*", path = "../rusty_libimobiledevice", features = [ "static" ] }
-plist_plus = { version = "*", path= "../plist_plus", features = [ "static" ] }
+rusty_libimobiledevice = { version = "*", path = "../rusty_libimobiledevice", features = [ "static", "vendored" ] }
+plist_plus = { version = "*", path= "../plist_plus", features = [ "static", "vendored" ] }
 dirs = { version = "*" }
 reqwest = { version = "*", features = [ "blocking" ] }
 zip = { version = "*" }
+log = { version = "*" }
+env_logger = { version = "*" }
+rand = { version = "*" }
+
+[[bin]]
+name = "pair"
+path = "src/pair.rs"
