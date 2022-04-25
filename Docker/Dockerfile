@@ -91,11 +91,28 @@ RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && ma
 
 #RUN apt-get install -y cmake \
 #    python-jinja2
-RUN echo "retry"
+WORKDIR /Product
+RUN git clone https://github.com/jkcoxson/mdns.git
+WORKDIR /Product
+RUN git clone https://github.com/jkcoxson/netmuxd.git
+WORKDIR /Product/netmuxd
+RUN cargo build --release
 WORKDIR /Product
 RUN git clone https://github.com/jkcoxson/JitStreamer.git
 WORKDIR /Product/JitStreamer
 RUN cargo build --release
 
+RUN apt install npm -y && npm install -g @vue/cli
+
+WORKDIR /var/lib/lockdown
+WORKDIR /DMG
+WORKDIR /Product/JitStreamer/target/release/dist
 WORKDIR /Product/JitStreamer/target/release/
-ENTRYPOINT ls && ./jit_streamer
+
+RUN echo 'hi to them all'
+#RUN curl https://raw.githubusercontent.com/Spidy123222/JitStreamer/Docker/Docker/start.sh -o /Product/JitStreamer/target/release/start.sh
+#RUN chmod +x /Product/JitStreamer/target/release/start.sh
+
+ENTRYPOINT export RUST_LOG=trace; /Product/JitStreamer/target/release/jit_streamer export & RUST_LOG=trace; /Product/netmuxd/target/release/netmuxd
+
+#ENTRYPOINT export RUST_LOG=trace && ls && ./jit_streamer && cd /Product/netmuxd/target/release/ && ./netmuxd && cd /Product/JitStreamer/target/release/
