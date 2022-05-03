@@ -95,10 +95,10 @@ RUN ./autogen.sh --enable-static --disable-shared --without-cython && make && ma
 RUN apt install xorg-dev libxcb-shape0-dev libxcb-xfixes0-dev clang avahi-daemon libavahi-client-dev -y
 WORKDIR /Product
 RUN git clone https://github.com/jkcoxson/mdns.git
-RUN git clone https://github.com/windy1/zeroconf-rs.git
+RUN git clone https://github.com/zeyugao/zeroconf-rs.git
 RUN git clone https://github.com/jkcoxson/netmuxd.git
 WORKDIR /Product/netmuxd
-RUN cargo build --release
+RUN cargo build --release --features "zeroconf"
 WORKDIR /Product
 RUN git clone https://github.com/jkcoxson/JitStreamer.git
 WORKDIR /Product/JitStreamer
