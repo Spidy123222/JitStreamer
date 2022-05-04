@@ -1,6 +1,6 @@
 {
  "port": 443,
-    "host": "host.docker.internal",
+    "host": "0.0.0.0",
     "static_path": "./dist",
     "database_path": "./database.json",
     "plist_storage": "/var/lib/lockdown/",
