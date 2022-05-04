@@ -1,0 +1,10 @@
+{
+ "port": 443,
+    "host": "0.0.0.0",
+    "static_path": "./dist",
+    "database_path": "./database.json",
+    "plist_storage": "/var/lib/lockdown/",
+    "dmg_path": "/DeveloperDiskImages/",
+    "altserver_path": "",
+    "allowed_ips": ["127.0"]
+}
