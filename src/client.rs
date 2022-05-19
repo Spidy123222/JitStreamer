@@ -1,36 +1,44 @@
 // jkcoxson
 
+use log::{info, warn};
+use plist_plus::Plist;
+use rusty_libimobiledevice::{idevice::Device, services::instproxy::InstProxyClient};
 use std::{
     net::IpAddr,
     str::FromStr,
     sync::{Arc, Mutex},
 };
 
-use log::{info, warn};
-use rusty_libimobiledevice::{idevice::Device, services::instproxy::InstProxyClient};
-
-use plist_plus::Plist;
+use crate::heartbeat::Heart;
 
 pub struct Client {
     pub ip: String,
     pub udid: String,
     pub pairing_file: String,
     pub dmg_path: String,
+    pub heart: Arc<Mutex<Heart>>,
 }
 
 impl Client {
     #[allow(dead_code)]
-    pub fn new(ip: String, udid: String, pairing_file: String, dmg_path: String) -> Client {
+    pub fn new(
+        ip: String,
+        udid: String,
+        pairing_file: String,
+        dmg_path: String,
+        heart: Arc<Mutex<Heart>>,
+    ) -> Client {
         Client {
             ip,
             udid,
             pairing_file,
             dmg_path,
+            heart,
         }
     }
 
     /// Connects to a given device and runs preflight operations.
-    pub async fn connect(&self) -> Result<(Device, Arc<Mutex<bool>>), String> {
+    pub fn connect(&self) -> Result<Device, String> {
         // Determine if device is in the muxer
         let ip = match IpAddr::from_str(&self.ip) {
             Ok(ip) => ip,
@@ -42,51 +50,14 @@ impl Client {
         let device = Device::new(self.udid.clone(), true, Some(ip), 0).unwrap();
         info!("Starting heartbeat {}", self.udid);
 
-        let heartbeat = match device.new_heartbeat_client("JitStreamer".to_string()) {
-            Ok(heartbeat) => heartbeat,
-            Err(e) => {
-                warn!("Error creating heartbeat: {:?}", e);
-                return Err("Unable to create heartbeat".to_string());
-            }
-        };
-        let stopper = Arc::new(Mutex::new(false));
-        let stopper_clone = Arc::clone(&stopper);
-        tokio::task::spawn_blocking(move || {
-            info!("Starting heartbeat loop");
-            let mut i = 0;
-            loop {
-                match heartbeat.receive(15000) {
-                    Ok(plist) => {
-                        info!("Received heartbeat: {:?}", plist);
-                        match heartbeat.send(plist) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                warn!("Error sending response: {:?}", e);
-                                return;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Error receiving heartbeat: {:?}", e);
-                        break;
-                    }
-                }
-                i = i + 1;
-                if i > 30 {
-                    info!("Heartbeat loop expired");
-                    break;
-                }
-                if *stopper_clone.lock().unwrap() {
-                    break;
-                }
-            }
-        });
+        // Start heartbeat
+        (*self.heart.lock().unwrap()).start(&device);
 
-        Ok((device, stopper))
+        Ok(device)
     }
 
-    pub async fn get_apps(&self) -> Result<Plist, String> {
-        let (device, stopper) = match self.connect().await {
+    pub fn get_apps(&self) -> Result<Plist, String> {
+        let device = match self.connect() {
             Ok(device) => device,
             Err(_) => {
                 return Err("Unable to connect to device".to_string());
@@ -97,6 +68,7 @@ impl Client {
             Ok(instproxy) => instproxy,
             Err(e) => {
                 warn!("Error starting instproxy: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to start instproxy".to_string());
             }
         };
@@ -111,17 +83,18 @@ impl Client {
             Ok(apps) => apps,
             Err(e) => {
                 warn!("Error looking up apps: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to lookup apps".to_string());
             }
         };
 
-        *stopper.lock().unwrap() = true;
+        (*self.heart.lock().unwrap()).kill(device.get_udid());
 
         Ok(lookup_results)
     }
 
-    pub async fn debug_app(&self, app: String) -> Result<(), String> {
-        let (device, stopper) = match self.connect().await {
+    pub fn debug_app(&self, app: String) -> Result<(), String> {
+        let device = match self.connect() {
             Ok(device) => device,
             Err(_) => {
                 return Err("Unable to connect to device".to_string());
@@ -132,6 +105,7 @@ impl Client {
             Ok(instproxy) => instproxy,
             Err(e) => {
                 warn!("Error starting instproxy: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to start instproxy".to_string());
             }
         };
@@ -147,6 +121,7 @@ impl Client {
             Ok(apps) => apps,
             Err(e) => {
                 warn!("Error looking up apps: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to lookup apps".to_string());
             }
         };
@@ -156,6 +131,7 @@ impl Client {
             Ok(p) => p,
             Err(_) => {
                 warn!("App not found");
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("App not found".to_string());
             }
         };
@@ -164,6 +140,7 @@ impl Client {
             Ok(p) => p,
             Err(_) => {
                 warn!("App not found");
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("App not found".to_string());
             }
         };
@@ -173,6 +150,7 @@ impl Client {
             Ok(p) => p,
             Err(e) => {
                 warn!("Error getting path for bundle identifier: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to get path for bundle identifier".to_string());
             }
         };
@@ -191,30 +169,38 @@ impl Client {
         }
 
         if debug_server.is_none() {
-            let (device, _stopper) = match self.connect().await {
-                Ok(device) => device,
-                Err(_) => {
-                    return Err("Unable to connect to device for disk mounting".to_string());
-                }
-            };
-            let path = match self.get_dmg_path().await {
+            let path = match self.get_dmg_path() {
                 Ok(p) => p,
                 Err(_) => {
+                    (*self.heart.lock().unwrap()).kill(device.get_udid());
                     return Err(
                         "Unable to get dmg path, the server was set up incorrectly!".to_string()
                     );
                 }
             };
-            tokio::spawn(async move {
-                match Client::upload_dev_dmg(device, path).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        warn!("Error uploading dmg: {:?}", e);
+            let device = device.clone();
+            let heart = self.heart.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut i = 5;
+                loop {
+                    match Client::upload_dev_dmg(&device, &path) {
+                        Ok(_) => {
+                            (*heart.lock().unwrap()).kill(device.get_udid());
+                            break;
+                        }
+                        Err(e) => {
+                            warn!("Error uploading dmg: {:?}", e);
+                            i -= 1;
+                            if i == 0 {
+                                (*heart.lock().unwrap()).kill(device.get_udid());
+                                break;
+                            }
+                        }
                     }
                 }
-                // *stopper.lock().unwrap() = true;
             });
-            return Err("JitStreamer is mounting the developer disk image, please keep your device on and connected. Check back back in a few minutes.".to_string());
+
+            return Err("JitStreamer is mounting your developer disk image. This should only take a minute or two, run this shortcut again in a bit. Keep your device on and connected.".to_string());
         }
         let debug_server = debug_server.unwrap();
 
@@ -224,6 +210,7 @@ impl Client {
             }
             Err(e) => {
                 warn!("Error setting max packet size: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to set max packet size".to_string());
             }
         }
@@ -234,6 +221,7 @@ impl Client {
             }
             Err(e) => {
                 warn!("Error setting working directory: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to set working directory".to_string());
             }
         }
@@ -244,6 +232,7 @@ impl Client {
             }
             Err(e) => {
                 warn!("Error setting argv: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to set argv".to_string());
             }
         }
@@ -252,7 +241,68 @@ impl Client {
             Ok(res) => info!("Got launch response: {:?}", res),
             Err(e) => {
                 warn!("Error checking if app launched: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
                 return Err("Unable to check if app launched".to_string());
+            }
+        }
+
+        match debug_server.send_command("D".into()) {
+            Ok(res) => info!("Detaching: {:?}", res),
+            Err(e) => {
+                warn!("Error detaching: {:?}", e);
+                (*self.heart.lock().unwrap()).kill(device.get_udid());
+                return Err("Unable to detach".to_string());
+            }
+        }
+
+        (*self.heart.lock().unwrap()).kill(device.get_udid());
+
+        Ok(())
+    }
+
+    pub fn attach_debugger(&self, pid: u16) -> Result<(), String> {
+        let device = self.connect()?;
+        let debug_server = match device.new_debug_server("jitstreamer") {
+            Ok(d) => d,
+            Err(_) => {
+                let path = match self.get_dmg_path() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        (*self.heart.lock().unwrap()).kill(device.get_udid());
+                        return Err("Unable to get dmg path, the server was set up incorrectly!"
+                            .to_string());
+                    }
+                };
+                match Client::upload_dev_dmg(&device, &path) {
+                    Ok(_) => match device.new_debug_server("jitstreamer") {
+                        Ok(d) => d,
+                        Err(_) => {
+                            (*self.heart.lock().unwrap()).kill(device.get_udid());
+                            return Err("Unable to get debug server".to_string());
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Error uploading dmg: {:?}", e);
+                        return Err("Unable to upload dmg".to_string());
+                    }
+                }
+            }
+        };
+
+        let command = "vAttach;".to_string();
+
+        // The PID will consist of 8 hex digits, so we need to pad it with 0s
+        let pid = format!("{:X}", pid);
+        let zeroes = 8 - pid.len();
+        let pid = format!("{}{}", "0".repeat(zeroes), pid);
+        let command = format!("{}{}", command, pid);
+        info!("Sending command: {}", command);
+
+        match debug_server.send_command(command.into()) {
+            Ok(res) => info!("Successfully attached: {:?}", res),
+            Err(e) => {
+                warn!("Error attaching: {:?}", e);
+                return Err("Unable to attach".to_string());
             }
         }
 
@@ -264,13 +314,11 @@ impl Client {
             }
         }
 
-        *stopper.lock().unwrap() = true;
-
         Ok(())
     }
 
-    pub async fn get_ios_version(&self) -> Result<String, String> {
-        let (device, _stopper) = match self.connect().await {
+    pub fn get_ios_version(&self) -> Result<String, String> {
+        let device = match self.connect() {
             Ok(device) => device,
             Err(_) => {
                 return Err("Unable to connect to device".to_string());
@@ -299,13 +347,11 @@ impl Client {
 
         info!("iOS version: {}", ios_version);
 
-        //*stopper.lock().unwrap() = true;
-
         Ok(ios_version)
     }
 
-    pub async fn get_dmg_path(&self) -> Result<String, String> {
-        let ios_version = self.get_ios_version().await?;
+    pub fn get_dmg_path(&self) -> Result<String, String> {
+        let ios_version = self.get_ios_version()?;
 
         // Check if directory exists
         let path = std::path::Path::new(&self.dmg_path).join(format!("{}.dmg", &ios_version));
@@ -325,13 +371,13 @@ impl Client {
             }
             // Download versions.json from GitHub
             info!("Downloading iOS dictionary...");
-            let response = match reqwest::get(lib).await {
+            let response = match reqwest::blocking::get(lib) {
                 Ok(response) => response,
                 Err(_) => {
                     return Err("Error downloading versions.json".to_string());
                 }
             };
-            let contents = match response.text().await {
+            let contents = match response.text() {
                 Ok(contents) => contents,
                 Err(_) => {
                     return Err("Error reading versions.json".to_string());
@@ -352,7 +398,7 @@ impl Client {
 
         // Download DMG zip
         info!("Downloading iOS {} DMG...", ios_version.clone());
-        let resp = match reqwest::get(ios_dmg_url.unwrap()).await {
+        let resp = match reqwest::blocking::get(ios_dmg_url.unwrap()) {
             Ok(resp) => resp,
             Err(_) => {
                 return Err("Error downloading DMG".to_string());
@@ -364,7 +410,7 @@ impl Client {
                 return Err("Error creating temp DMG.zip".to_string());
             }
         };
-        let mut content = std::io::Cursor::new(match resp.bytes().await {
+        let mut content = std::io::Cursor::new(match resp.bytes() {
             Ok(content) => content,
             Err(_) => {
                 return Err("Error reading DMG".to_string());
@@ -428,7 +474,7 @@ impl Client {
         Ok(format!("{}/{}.dmg", &self.dmg_path, ios_version))
     }
 
-    pub async fn upload_dev_dmg(device: Device, dmg_path: String) -> Result<(), String> {
+    pub fn upload_dev_dmg(device: &Device, dmg_path: &String) -> Result<(), String> {
         let mut lockdown_client =
             match device.new_lockdownd_client("ideviceimagemounter".to_string()) {
                 Ok(lckd) => {

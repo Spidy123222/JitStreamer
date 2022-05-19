@@ -1,5 +1,7 @@
 // jkcoxson
 
+pub const VERSION: &str = "0.1.2";
+
 use backend::Backend;
 use bytes::BufMut;
 use futures::TryStreamExt;
@@ -7,7 +9,10 @@ use log::{info, warn};
 use plist_plus::Plist;
 use serde_json::Value;
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::{
+    sync::{mpsc, Mutex},
+    time::timeout,
+};
 use warp::{
     filters::BoxedFilter,
     http::Uri,
@@ -19,6 +24,7 @@ use warp::{
 mod backend;
 mod client;
 mod config;
+mod heartbeat;
 mod packets;
 
 #[tokio::main]
@@ -39,6 +45,8 @@ async fn main() {
     let list_apps_backend = backend.clone();
     let shortcuts_launch_backend = backend.clone();
     let shortcuts_unregister_backend = backend.clone();
+    let attach_backend = backend.clone();
+    let census_backend = backend.clone();
 
     // Status route
     let status_route = warp::path("status")
@@ -80,6 +88,11 @@ async fn main() {
         .and(warp::get())
         .and_then(|| version_route());
 
+    // Census route
+    let census_route = warp::path("census")
+        .and(warp::get())
+        .and_then(move || census(census_backend.clone()));
+
     // Shortcuts route
     let list_apps_route = warp::path!("shortcuts" / "list_apps")
         .and(warp::get())
@@ -96,6 +109,11 @@ async fn main() {
         .and(warp::filters::addr::remote())
         .and_then(move |addr| shortcuts_unregister(addr, shortcuts_unregister_backend.clone()));
 
+    let attach_route = warp::path!("attach" / u16)
+        .and(warp::post())
+        .and(warp::filters::addr::remote())
+        .and_then(move |code: u16, addr| attach_debugger(code, addr, attach_backend.clone()));
+
     // Assemble routes for service
     let routes = root_redirect()
         .or(warp::fs::dir(current_dir.join(static_dir)))
@@ -105,7 +123,9 @@ async fn main() {
         .or(potential_follow_up_route)
         .or(list_apps_route)
         .or(shortcuts_launch_route)
+        .or(attach_route)
         .or(version_route)
+        .or(census_route)
         .or(unregister_route)
         .or(admin_route);
     let ssl_routes = routes.clone();
@@ -150,7 +170,16 @@ fn root_redirect() -> BoxedFilter<(impl Reply,)> {
 }
 
 async fn version_route() -> Result<impl Reply, Rejection> {
-    Ok("0.1.2")
+    Ok(VERSION)
+}
+
+async fn census(backend: Arc<Mutex<Backend>>) -> Result<impl Reply, Rejection> {
+    let lock = backend.lock().await;
+    Ok(packets::census_response(
+        lock.counter.clone(),
+        lock.deserialized_clients.len(),
+        VERSION.to_string(),
+    ))
 }
 
 async fn upload_file(
@@ -366,7 +395,7 @@ async fn list_apps(
     backend: Arc<Mutex<Backend>>,
 ) -> Result<impl Reply, Rejection> {
     info!("Device list requested");
-    let mut backend = backend.lock().await;
+    let mut lock = backend.lock().await;
     if let None = addr {
         warn!("No address provided");
         return Ok(packets::list_apps_response(
@@ -376,7 +405,7 @@ async fn list_apps(
             serde_json::Value::Object(serde_json::Map::new()),
         ));
     }
-    if !backend.check_ip(&addr.unwrap().to_string()) {
+    if !lock.check_ip(&addr.unwrap().to_string()) {
         warn!("Address not allowed");
         return Ok(packets::list_apps_response(
             false,
@@ -385,7 +414,7 @@ async fn list_apps(
             serde_json::Value::Object(serde_json::Map::new()),
         ));
     }
-    let client = match backend.get_by_ip(&addr.unwrap().ip().to_string()) {
+    let client = match lock.get_by_ip(&addr.unwrap().ip().to_string()) {
         Some(client) => client,
         None => {
             warn!("No client found with the given IP");
@@ -397,23 +426,37 @@ async fn list_apps(
             ));
         }
     };
-    drop(backend);
-    let v = match client.get_apps().await {
+    drop(lock);
+
+    let (tx, mut rx) = mpsc::channel(1);
+
+    tokio::task::spawn_blocking(move || {
+        let v = match client.get_apps() {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Unable to get apps");
+                tx.blocking_send(Err(packets::list_apps_response(
+                    false,
+                    &format!("Unable to get apps: {}", e).to_string(),
+                    serde_json::Value::Object(serde_json::Map::new()),
+                    serde_json::Value::Object(serde_json::Map::new()),
+                )))
+                .unwrap();
+                return;
+            }
+        };
+        tx.blocking_send(Ok(v)).unwrap();
+    });
+
+    let v = match rx.recv().await.unwrap() {
         Ok(v) => v,
-        Err(e) => {
-            warn!("Unable to get apps");
-            return Ok(packets::list_apps_response(
-                false,
-                &format!("Unable to get apps: {}", e).to_string(),
-                serde_json::Value::Object(serde_json::Map::new()),
-                serde_json::Value::Object(serde_json::Map::new()),
-            ));
-        }
+        Err(e) => return Ok(e),
     };
 
     // Trim the list of apps
     let mut prefered_apps = Value::Object(serde_json::Map::new());
     let mut apps: Value = Value::Object(serde_json::Map::new());
+    let mut count = 0;
     for i in v {
         let i = i.plist;
         let name = i
@@ -436,7 +479,11 @@ async fn list_apps(
         } else {
             apps[&name] = serde_json::Value::String(bundle_id);
         }
+        count += 1;
     }
+
+    let mut lock = backend.lock().await;
+    lock.counter.fetched += count;
 
     let res = packets::list_apps_response(true, "", apps, prefered_apps);
     Ok(res)
@@ -448,19 +495,19 @@ async fn shortcuts_run(
     backend: Arc<Mutex<Backend>>,
 ) -> Result<impl Reply, Rejection> {
     info!("Device has sent request to launch {}", app);
-    let mut backend = backend.lock().await;
+    let mut lock = backend.lock().await;
     if let None = addr {
         warn!("No address provided");
         return Ok(packets::launch_response(false, "Unable to get IP address"));
     }
-    if !backend.check_ip(&addr.unwrap().to_string()) {
+    if !lock.check_ip(&addr.unwrap().to_string()) {
         warn!("Address not allowed");
         return Ok(packets::launch_response(
             false,
             "Address not allowed, connect to the VLAN",
         ));
     }
-    let client = match backend.get_by_ip(&addr.unwrap().ip().to_string()) {
+    let client = match lock.get_by_ip(&addr.unwrap().ip().to_string()) {
         Some(client) => client,
         None => {
             warn!("No client found with the given IP");
@@ -470,16 +517,100 @@ async fn shortcuts_run(
             ));
         }
     };
-    drop(backend);
+    lock.counter.launched += 1;
+    drop(lock);
 
-    match client.debug_app(app.clone()).await {
-        Ok(_) => {
-            return Ok(packets::launch_response(true, ""));
-        }
-        Err(e) => {
-            return Ok(packets::launch_response(false, &e));
+    let (tx, mut rx) = mpsc::channel(1);
+
+    tokio::task::spawn_blocking(move || {
+        match client.debug_app(app.clone()) {
+            Ok(_) => {
+                tx.blocking_send(packets::launch_response(true, ""))
+                    .unwrap();
+            }
+            Err(e) => {
+                tx.blocking_send(packets::launch_response(false, &e))
+                    .unwrap();
+            }
+        };
+    });
+
+    Ok(rx.recv().await.unwrap())
+}
+
+async fn attach_debugger(
+    pid: u16,
+    addr: Option<SocketAddr>,
+    backend: Arc<Mutex<Backend>>,
+) -> Result<impl Reply, Rejection> {
+    info!("Device has sent request to attach to process {}", pid);
+    let mut backend = backend.lock().await;
+    if let None = addr {
+        warn!("No address provided");
+        return Ok(packets::attach_response(false, "Unable to get IP address"));
+    }
+    if !backend.check_ip(&addr.unwrap().to_string()) {
+        warn!("Address not allowed");
+        return Ok(packets::attach_response(
+            false,
+            "Address not allowed, connect to the VLAN",
+        ));
+    }
+    let client = match backend.get_by_ip(&addr.unwrap().ip().to_string()) {
+        Some(client) => client,
+        None => {
+            warn!("No client found with the given IP");
+            return Ok(packets::attach_response(
+                false,
+                "No client found with the given IP, please register your device",
+            ));
         }
     };
+    backend.counter.attached += 1;
+    drop(backend);
+
+    let (tx, mut rx) = mpsc::channel(1);
+
+    tokio::task::spawn_blocking(move || {
+        let mut i = 5;
+        loop {
+            match client.attach_debugger(pid) {
+                Ok(_) => match tx.blocking_send(packets::attach_response(true, "")) {
+                    Ok(_) => break,
+                    Err(e) => {
+                        warn!("Unable to send response: {}", e);
+                        break;
+                    }
+                },
+                Err(e) => {
+                    if i == 0 {
+                        match tx.blocking_send(packets::attach_response(false, &e)) {
+                            Ok(_) => (),
+                            Err(e) => {
+                                warn!("Unable to send response: {}", e);
+                            }
+                        }
+                        break;
+                    }
+                    i -= 1;
+                }
+            };
+        }
+    });
+
+    match timeout(std::time::Duration::from_secs(60), rx.recv()).await {
+        Ok(x) => match x {
+            Some(x) => Ok(x),
+            None => Ok(packets::attach_response(false, "Timeout")),
+        },
+        Err(_) => {
+            warn!("Unable to receive response");
+            Ok(packets::attach_response(
+                false,
+                "Unable to receive response",
+            ))
+        }
+    }
 }
 
 async fn shortcuts_unregister(
